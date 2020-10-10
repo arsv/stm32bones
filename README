@@ -1,0 +1,281 @@
+Bare-bones STM32
+~~~~~~~~~~~~~~~~
+The code here provides a minimalistic template/boilerplate for a C project
+targeting STM32 microcontrollers, namely
+
+    * startup code / interrupt vectors (start.s)
+    * bindings for on-chip peripherals (stm32.h, stm32.s)
+    * linker script (stm32.ld)
+
+The point is keeping things as simple and straightforward as possible while
+still maintaining decent readability for the resulting C code.
+
+This project is meant for use with a GNU toolchain (arm-none-eabi, but any
+other arm-*-* capable of generating Thumb2 code should work as well).
+GNU toolchains are not particularly suitable for STM32 work, but they are
+readily available and it's not like there are a lot of alternatives anyway.
+
+This is not a library. All files from this repository are meant to be modified
+to fit the task at hand, or maybe even just used as examples for writing code
+specific to a particular hardware design.
+
+
+Usage guidelines
+~~~~~~~~~~~~~~~~
+Plug relevant interrupt handlers into the appropriate locations in the vector
+table (start.s). Implement them elsewhere. For Cortex-M, interrupt handlers
+are just regular C functions. Same with the reset handler.
+
+Most projects only use a limited subset of peripherals. Remove the ones not
+in use from stm32.h and stm32.s. This project can be used as a reference for
+picking peripheral definitions from.
+
+
+Accessing peripherals
+~~~~~~~~~~~~~~~~~~~~~
+The approach used in this project is somewhat unusual for STM32 projects.
+Memory-mapped peripherals are declared as extern structs, and their
+addresses get substituted by the linker, so the C code looks like this:
+
+    extern volatile struct { ... } TIM2;
+
+    ...
+
+    TIM2.PSC = 16000;
+
+and the symbol value comes from stm32.o:
+
+    stm32.o: ELF 32-bit LSB relocatable, ARM, EABI5 version 1 (SYSV)
+    ...
+    40000000 A TIM2
+    ...
+
+For comparison, CMSIS equivalent would be
+
+    struct TIM_type { ... };
+
+    #define TIM2 ((struct TIM_type*) 0x40000000)
+
+    ...
+
+    TIM2->PSC = 16000;
+
+The approach implemented here results in cleaner code, does not require naming
+struct that do not need to be named, and does away with #define's. 
+
+It does however require some stuff to be done outside of C, and relies heavily
+on toolchain support for absolute symbols. Neither of that is a problem with
+GNU toolchains though.
+
+
+Un-named register bits
+~~~~~~~~~~~~~~~~~~~~~~
+Bits for peripheral registers are expected to be specified literally:
+
+    TIM2.DIER = BIT(0); /* enable update interrupt */
+
+For comparison, with CMSIS-style definitions this line would be
+
+    TIM2->DIER = TIM_DIER_UIE;
+
+Defining a name for every meaningful bit in every register is quite costly.
+The header for the stm32f1 series here, describing pretty much all peripherals
+on those chips, is about 7KB in size. With named bits, it would be pushing
+100KB. Readability benefits of name bits, in case of STM32 in particular,
+are questionable at best; the example above with "DIER UIE" is typical.
+
+Understanding STM32 code invariably involves documentation look-ups, at which
+point it doesn't matter whether you're looking for "UIE" bit in "TIMx_DIER",
+or for "bit 0" in the same register. In fact, "bit 0" might be easier to locate
+than "UIE". For any other purposes, free-form comments where appropriate would
+likely add much more than named bits.
+
+
+No conventional main()
+~~~~~~~~~~~~~~~~~~~~~~
+There is no main() and no explicit main loop in this template.
+
+The reset handler function can and in most cases should return right after
+initializing peripheral registers and enabling relevant interrupts.
+
+The MCU should spend most of its time running the WFI instruction in start.s.
+That's the core of the "main loop" except there is no explicit loop anywhere.
+
+
+Example application
+~~~~~~~~~~~~~~~~~~~
+The code is included mostly to demonstrate overall build process, peripheral
+access and basic interrupt handling. It sets up the MCU to run at 32MHz off
+an external 8MHz crystal, then uses one of the timer peripherals to blink
+an LED attached to PB1 GPIO pin.
+
+The code also shows how to use SWO debug output, although actually seeing
+that output requires SWO-capable debug probe like the original ST-Link V2.
+Note "USB-stick" shaped ST-Link clones do not generally support SWO.
+
+Sample OpenOCD configuration for ST-Link v2:
+
+    source [find interface/stlink-v2.cfg]
+    transport select hla_swd
+    reset_config srst_nogate
+    source [find target/stm32f1x.cfg]
+     
+    init
+    reset halt
+    itm ports on
+    tpiu config internal swo.out uart off 32000000
+
+Using GDB to flash and debug the code via OpenOCD:
+
+    arm-none-eabi-gdb ./blink.elf
+
+    > target external :3333
+    > load
+    > break reset
+    > run
+
+Alternatively, the raw binary can be flashed using st-flash from stlink project:
+
+    st-flash write blink.bin 0x8000000
+
+The raw binary is the actual code that gets written to the MCU flash. However,
+most GNU tools either prefer or outright require an ELF file for input instead,
+even though ELFs do not make much sense for STM32 binaries.
+
+
+Register names
+~~~~~~~~~~~~~~
+A peripheral register named FOO_BAR in the STM docs should be accessible
+as FOO.BAR in most cases. There are few exceptions however, search for
+either FOO or BAR instead to see how it's declared.
+
+
+Division and multiplication
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Cortex-M3 core lacks hardware support for division and multiplication.
+GCC will emit function calls instead, referencing software implementations
+for libgcc. The template does not link libgcc, so the linker will complain
+about unresolved symbols like __aeabi_uidivmod. Your options at this point:
+
+    * adjust the link command to use gcc as the linker (*)
+    * find libgcc and link it explicitly
+    * provide your own implementations, aliasing the horrible GNU names
+    * treat it as an error and fix the code
+
+Note (*) to use gcc as the linker, it is important to have the right gcc
+build (arm-none-eabi) and also prevent it from linking its own start files.
+Inspect the resulting binary to make sure gcc does what you expect it to do
+and not some weird GNU stuff.
+
+Regarding the last option, these ops are quite expensive in terms of cycles,
+and in the GNU implementation involve an actual function call, so it might be
+a good idea in some project to get warned whenever they appear in the code.
+The functions form libgcc are just regular C functions, not even assembly,
+so there is really no trade-off between say
+
+    c = a / b
+    c = divide(a, b)
+
+except that the latter explicitly shows a function call and makes it easier
+to name the routine.
+
+
+Why the structs?
+~~~~~~~~~~~~~~~~
+(that is, why TIM2.DIER and not TIM2_DIER as it is described in the docs)
+
+On ARM, it is highly beneficial to access registers located close together
+using (base register + immediate offset) addressing mode. The only way to do
+that in C, at least with a GNU toolchain, is declaring groups of closely
+located registers as structs. Then the start of the struct ends up as the base
+register, and the offsets of the fields within the struct become immediates.
+
+
+Why the BSS init code
+~~~~~~~~~~~~~~~~~~~~~
+Specifically, what's the point in having that assembly chunk in start.s
+instead of just initializing all the variables in C:
+
+    int A;
+    int B;
+
+    ...
+
+    void reset(void)
+    {
+        A = 0;
+	B = 13;
+    }
+
+The reasoning is quite similar to the register structs issue.
+The point is basically to have
+
+    union {
+        uint raw[N];
+	struct {
+	    /* all uninitialized globals here */
+	};
+    } BSS;
+
+and then use the easily addressable BSS.raw[] during initialization.
+The assembly code achieves that without having to declare the ugly union.
+
+Some projects might want to ditch the assembly chunk and do initialization
+in a different way. However, because the chunk is so small, there are very
+few cases where doing that would be beneficial.
+
+
+Base address
+~~~~~~~~~~~~
+The code is assembled/linked at 0x08000000 which is the nominal flash base
+address. During boot, Cortex-M maps its "boot media" to 0x00000000, so when
+booting from the flash (typical STM32 configuration) the code in the flash
+is also available at the start of the address space. Therefore, linking could
+be done at 0x00000000, and the resulting binary would then also work from
+other "boot media" like the RAM.
+
+Linking at 0x08000000 however has the benefit of making code pointers easy
+to identify, in the registers and otherwise, versus regular computed values.
+Which is not the case with the code linked at 0x00000000, where the pointers
+end up being just small integers. On STM32, different boot configurations
+would requite more work than just linking at 0x00000000 anyway.
+
+
+Half-word and byte access registers
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+All registers in stm32.h are declared as simple 4-byte entities. Not unions.
+This is because all registers on STM32 allow word access, and most of them
+do not need anything else. So sacrificing simplicity and readability in order
+to allow that one or two cases which need byte or half-word respresentation
+does not make much sense.
+
+If for some reason less-than-word access is requires, there are two options:
+
+    * declare relevant registers with a different type
+    * implement short-access operations in C
+
+The blink example illustrates the second option with strb(), which compiles
+down to a simple strb instruction as expected.
+
+For the first option,
+
+    union {
+        byte b;
+	ushort h;
+	uint w;
+    }
+
+can be used in place of uint for relevant registers.
+STM32 is strictly little-endian, so a union like that does work.
+
+
+References
+~~~~~~~~~~
+STM RM0008 Reference Manual (for the STM32F1 series MCUs)
+(peripheral registers)
+
+STM PM0056 Programming Manual (for the STM32F1/F2/L1 MCUs)
+(core, boot order, memory map)
+
+ARM Cortex-M3 Technical Reference Manual
+(core registers, general core information)
