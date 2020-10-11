@@ -96,7 +96,7 @@ static void start_clock(void)
 void reset(void)
 {
 	/* Start peripheral clocks
-	   We need TIM1 from APB1 and GPIOB from APB2 */
+	   We need TIM2 from APB1 and GPIOB from APB2 */
 	RCC.APB2ENR = BIT(3);
 	RCC.APB1ENR = BIT(0);
 
