@@ -119,6 +119,8 @@ start_reset:
 3:	bl reset
         // fallthrough
 4:	wfi
+	b 4b
+	nop
 
 5:	.word ROM_brk
 	.word RAM_org

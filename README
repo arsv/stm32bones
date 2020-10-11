@@ -99,7 +99,6 @@ The reset handler function can and in most cases should return right after
 initializing peripheral registers and enabling relevant interrupts.
 
 The MCU should spend most of its time running the WFI instruction in start.s.
-That's the core of the "main loop" except there is no explicit loop anywhere.
 
 
 Example application
