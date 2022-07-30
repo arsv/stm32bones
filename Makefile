@@ -6,7 +6,7 @@ OBJCOPY = $(CROSS)objcopy
 
 ASFLAGS = -g -gstabs -mcpu=cortex-m3 -mthumb -mapcs-32
 CFLAGS = -Wall -g -Og -mthumb -ffreestanding -nostdinc
-LDFLAGS = -g -nostartfiles -nostdlib
+LDFLAGS = -g -nostdlib
 
 bin = blink.bin
 elf = blink.elf

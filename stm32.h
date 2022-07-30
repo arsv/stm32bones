@@ -1,5 +1,9 @@
 typedef unsigned int uint;
 typedef unsigned char byte;
+typedef unsigned short ushort;
+
+typedef unsigned short uint16_t;
+typedef unsigned int uint32_t;
 
 #define BIT(n) (1<<(n))
 #define BS(v,s) ((v)<<(s))
@@ -171,7 +175,7 @@ extern volatile struct {
 	uint CRH;
 	uint IDR;
 	uint ODR;
-	uint BSSR;
+	uint BSRR;
 	uint BRR;
 	uint LCKR;
 } GPIOA, GPIOB, GPIOC, GPIOD, GPIOE, GPIOF, GPIOG;
@@ -384,15 +388,7 @@ extern volatile struct {
 /* Ref. RM0008 #23 Universal serial bus full-speed device interace */
 
 extern volatile struct {
-	uint EP0R;
-	uint EP1R;
-	uint EP2R;
-	uint EP3R;
-	uint EP4R;
-	uint EP5R;
-	uint EP6R;
-	uint EP7R;
-	uint _0[8];
+	uint EP[16]; /* only the first 8 are actually valid */
 	uint CNTR;
 	uint ISTR;
 	uint FNR;
@@ -492,3 +488,28 @@ extern volatile struct {
 	uint CR3;
 	uint GTPR;
 } USART1, USART2, USART3;
+
+/* Ref. PM0075 #3 Register description */
+
+extern volatile struct {
+	uint ACR;
+	uint KEYR;
+	uint OPTKEYR;
+	uint SR;
+	uint CR;
+	uint AR;
+	uint _1;
+	uint OBR;
+	uint WRPR;
+} FLASH;
+
+
+static inline void enable_irq(void)
+{
+	asm volatile ("cpsie i" : : : "memory");
+}
+
+static inline void disable_irq(void)
+{
+	asm volatile ("cpsid i" : : : "memory");
+}
